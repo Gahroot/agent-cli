@@ -49,12 +49,14 @@ AI assistants are smart but powerless. They can answer questions, but they can't
 
 Pocket CLI changes that. It's a universal interface that lets any AI agent interact with the real world:
 - Check your emails and send replies
+- Send SMS via Twilio, push notifications via ntfy
+- Message on Slack, Discord, Telegram
 - Search YouTube, get video stats
 - Browse Hacker News, Reddit, Twitter
-- Look up weather, crypto prices, IP info
+- Look up weather, crypto prices, currency rates
 - Query Wikipedia, StackOverflow, dictionaries
-- Manage Todoist tasks, Notion pages
-- And 50+ more integrations
+- Manage Todoist tasks, Notion pages, Trello boards
+- **42 integrations** across 8 categories
 
 All with simple commands that return clean JSON — perfect for AI to understand and act on.
 
@@ -68,15 +70,27 @@ pocket news hn top -l 5              # Top 5 Hacker News stories
 pocket utility weather now "Tokyo"   # Current weather in Tokyo
 pocket knowledge wiki summary "AI"   # Wikipedia summary
 pocket utility crypto price bitcoin  # Bitcoin price
+pocket utility currency convert 100 USD EUR  # Currency conversion
+pocket utility translate text "Hello" --to es # Translate to Spanish
 pocket dev npm info react            # npm package info
+pocket dev dockerhub search nginx    # Search Docker images
+pocket comms notify ntfy mytopic "Hello!"    # Push notification (no auth)
+pocket comms webhook slack [url] "Message"   # Slack webhook
 ```
 
 ### With credentials (one-time setup)
 ```bash
 pocket comms email list -l 10        # Your latest emails
+pocket comms slack channels          # List Slack channels
+pocket comms discord guilds          # List Discord servers
+pocket comms telegram send 123 "Hi"  # Send Telegram message
+pocket comms twilio send +1234 "SMS" # Send SMS via Twilio
 pocket social youtube search "AI"    # Search YouTube
 pocket social twitter timeline       # Your Twitter feed
 pocket productivity todoist tasks    # Your todo list
+pocket productivity trello boards    # Your Trello boards
+pocket dev github repos              # Your GitHub repos
+pocket dev jira issues               # Your Jira issues
 ```
 
 ---
@@ -110,22 +124,54 @@ $ pocket knowledge dict define "API"
 
 # Check the weather
 $ pocket utility weather now "San Francisco"
+
+# Send yourself a notification (no auth needed!)
+$ pocket comms notify ntfy my-alerts "Task completed!"
+```
+
+### Communication examples
+```bash
+# Send SMS (requires Twilio setup)
+pocket comms twilio send "+15551234567" "Hello from Pocket CLI"
+
+# Discord bot commands
+pocket comms discord guilds              # List servers
+pocket comms discord channels 123456     # List channels in server
+pocket comms discord send 789 "Hello!"   # Send message to channel
+
+# Slack integration
+pocket comms slack channels              # List channels
+pocket comms slack send general "Hi!"    # Post to channel
+pocket comms slack search "important"    # Search messages
+
+# Telegram bot
+pocket comms telegram chats              # List chats
+pocket comms telegram send 123 "Hello"   # Send message
+
+# Push notifications (ntfy.sh - no auth!)
+pocket comms notify ntfy alerts "Server is down!" --priority 5
+
+# Webhooks (no auth)
+pocket comms webhook discord [url] "Deployment complete"
 ```
 
 ---
 
-## 📦 All integrations
+## 📦 All 42 integrations
 
 | Category | Services |
 |----------|----------|
-| **Social** | Twitter, Reddit, Mastodon, YouTube |
-| **Communication** | Email (IMAP/SMTP), Slack, Discord, Telegram |
-| **News** | Hacker News, RSS feeds, NewsAPI |
-| **Knowledge** | Wikipedia, StackOverflow, Dictionary |
-| **Dev Tools** | GitHub, GitLab, Linear, npm, PyPI |
-| **Productivity** | Todoist, Notion, Calendar |
-| **Utility** | Weather, Crypto prices, IP lookup |
-| **AI** | OpenAI, Anthropic |
+| **Social** (4) | Twitter, Reddit, Mastodon, YouTube |
+| **Communication** (7) | Email, Slack, Discord, Telegram, Twilio SMS, Push Notifications (ntfy/Pushover), Webhooks |
+| **News** (3) | Hacker News, RSS feeds, NewsAPI |
+| **Knowledge** (3) | Wikipedia, StackOverflow, Dictionary |
+| **Dev Tools** (9) | GitHub, GitLab, Linear, Jira, Cloudflare, Vercel, npm, PyPI, Docker Hub |
+| **Productivity** (4) | Todoist, Notion, Calendar, Trello |
+| **Utility** (10) | Weather, Crypto, Currency, IP lookup, DNS/WHOIS/SSL, Wayback Machine, Holidays, Translation, URL Shortener, Stocks |
+| **AI** (2) | OpenAI, Anthropic |
+
+### 19 integrations work without any setup:
+Hacker News, RSS, Wikipedia, StackOverflow, Dictionary, Weather, Crypto, Currency, IP lookup, Domain tools, Wayback Machine, Holidays, Translation, URL Shortener, npm, PyPI, Docker Hub, ntfy notifications, Webhooks
 
 ---
 
