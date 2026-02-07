@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strconv"
 	"strings"
@@ -11,6 +12,35 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/unstablemind/pocket/pkg/output"
 )
+
+var htmlTagRe = regexp.MustCompile(`<[^>]*>`)
+
+// htmlToPlaintext converts HTML email body to readable plaintext
+// preserving line breaks, list items, and paragraph structure.
+func htmlToPlaintext(html string) string {
+	s := html
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+	for _, tag := range []string{"div", "p", "br", "tr", "h1", "h2", "h3", "h4", "h5", "h6"} {
+		s = regexp.MustCompile(`(?i)</`+tag+`\s*>`).ReplaceAllString(s, "\n")
+		s = regexp.MustCompile(`(?i)<`+tag+`[^>]*/>`).ReplaceAllString(s, "\n")
+		s = regexp.MustCompile(`(?i)<`+tag+`[^>]*>`).ReplaceAllString(s, "")
+	}
+	s = regexp.MustCompile(`(?i)<br\s*/?\s*>`).ReplaceAllString(s, "\n")
+	s = regexp.MustCompile(`(?i)<li[^>]*>`).ReplaceAllString(s, "• ")
+	s = regexp.MustCompile(`(?i)</li\s*>`).ReplaceAllString(s, "\n")
+	s = htmlTagRe.ReplaceAllString(s, "")
+	s = strings.ReplaceAll(s, "&amp;", "&")
+	s = strings.ReplaceAll(s, "&amp", "&")
+	s = strings.ReplaceAll(s, "&lt;", "<")
+	s = strings.ReplaceAll(s, "&gt;", ">")
+	s = strings.ReplaceAll(s, "&quot;", "\"")
+	s = strings.ReplaceAll(s, "&#39;", "'")
+	s = strings.ReplaceAll(s, "&apos;", "'")
+	s = strings.ReplaceAll(s, "&nbsp;", " ")
+	s = regexp.MustCompile(`\n{3,}`).ReplaceAllString(s, "\n\n")
+	return strings.TrimSpace(s)
+}
 
 // Account represents an Apple Mail account
 type Account struct {
@@ -862,7 +892,8 @@ func parseMessageList(output string) []Message {
 
 // parseFullMessage parses a full message with body
 func parseFullMessage(output string) *Message {
-	parts := strings.Split(output, "|||")
+	// Use SplitN with limit 10 so "|||" inside the body doesn't break parsing
+	parts := strings.SplitN(output, "|||", 10)
 	if len(parts) < 10 {
 		return nil
 	}
@@ -877,7 +908,7 @@ func parseFullMessage(output string) *Message {
 		DateReceived: parts[6],
 		Unread:       parts[7] == "true",
 		Flagged:      parts[8] == "true",
-		Body:         parts[9],
+		Body:         htmlToPlaintext(parts[9]),
 	}
 }
 

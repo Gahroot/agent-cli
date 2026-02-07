@@ -4,12 +4,49 @@ import (
 	"bytes"
 	"fmt"
 	"os/exec"
+	"regexp"
 	"runtime"
 	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/unstablemind/pocket/pkg/output"
 )
+
+var htmlTagRe = regexp.MustCompile(`<[^>]*>`)
+
+// htmlToPlaintext converts Apple Notes HTML body to readable plaintext
+// preserving line breaks, list items, and paragraph structure.
+func htmlToPlaintext(html string) string {
+	s := html
+	// Normalize line endings
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+	// Block elements that create line breaks
+	for _, tag := range []string{"div", "p", "br", "tr", "h1", "h2", "h3", "h4", "h5", "h6"} {
+		s = regexp.MustCompile(`(?i)</`+tag+`\s*>`).ReplaceAllString(s, "\n")
+		s = regexp.MustCompile(`(?i)<`+tag+`[^>]*/>`).ReplaceAllString(s, "\n")
+		s = regexp.MustCompile(`(?i)<`+tag+`[^>]*>`).ReplaceAllString(s, "")
+	}
+	// <br> and <br/> variants
+	s = regexp.MustCompile(`(?i)<br\s*/?\s*>`).ReplaceAllString(s, "\n")
+	// List items get bullet prefix
+	s = regexp.MustCompile(`(?i)<li[^>]*>`).ReplaceAllString(s, "• ")
+	s = regexp.MustCompile(`(?i)</li\s*>`).ReplaceAllString(s, "\n")
+	// Strip remaining tags
+	s = htmlTagRe.ReplaceAllString(s, "")
+	// Decode common HTML entities (handle with and without trailing semicolon)
+	s = strings.ReplaceAll(s, "&amp;", "&")
+	s = strings.ReplaceAll(s, "&amp", "&")
+	s = strings.ReplaceAll(s, "&lt;", "<")
+	s = strings.ReplaceAll(s, "&gt;", ">")
+	s = strings.ReplaceAll(s, "&quot;", "\"")
+	s = strings.ReplaceAll(s, "&#39;", "'")
+	s = strings.ReplaceAll(s, "&apos;", "'")
+	s = strings.ReplaceAll(s, "&nbsp;", " ")
+	// Collapse 3+ consecutive newlines to 2
+	s = regexp.MustCompile(`\n{3,}`).ReplaceAllString(s, "\n\n")
+	return strings.TrimSpace(s)
+}
 
 // Note represents a note in Apple Notes
 type Note struct {
@@ -228,9 +265,11 @@ func newReadCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			noteName := args[0]
 
-			var script string
+			// We fetch metadata and body in separate AppleScript calls
+			// because the HTML body can contain any delimiter we'd use
+			metaScript := ""
 			if folder != "" {
-				script = fmt.Sprintf(`
+				metaScript = fmt.Sprintf(`
 tell application "Notes"
 	set targetName to "%s"
 	set folderName to "%s"
@@ -238,10 +277,9 @@ tell application "Notes"
 		if name of theFolder is folderName then
 			repeat with theNote in notes of theFolder
 				if name of theNote is targetName then
-					set noteBody to plaintext of theNote
 					set noteCreated to creation date of theNote as string
 					set noteModified to modification date of theNote as string
-					return targetName & "|||" & noteBody & "|||" & folderName & "|||" & noteCreated & "|||" & noteModified
+					return folderName & "|||" & noteCreated & "|||" & noteModified
 				end if
 			end repeat
 		end if
@@ -249,7 +287,7 @@ tell application "Notes"
 	return "NOT_FOUND"
 end tell`, escapeAppleScript(noteName), escapeAppleScript(folder))
 			} else {
-				script = fmt.Sprintf(`
+				metaScript = fmt.Sprintf(`
 tell application "Notes"
 	set targetName to "%s"
 	repeat with theFolder in folders
@@ -257,10 +295,9 @@ tell application "Notes"
 		if folderName is not "Recently Deleted" then
 			repeat with theNote in notes of theFolder
 				if name of theNote is targetName then
-					set noteBody to plaintext of theNote
 					set noteCreated to creation date of theNote as string
 					set noteModified to modification date of theNote as string
-					return targetName & "|||" & noteBody & "|||" & folderName & "|||" & noteCreated & "|||" & noteModified
+					return folderName & "|||" & noteCreated & "|||" & noteModified
 				end if
 			end repeat
 		end if
@@ -269,28 +306,50 @@ tell application "Notes"
 end tell`, escapeAppleScript(noteName))
 			}
 
-			result, err := runAppleScript(script)
+			metaResult, err := runAppleScript(metaScript)
 			if err != nil {
 				return output.PrintError("read_failed", err.Error(), nil)
 			}
 
-			if result == "NOT_FOUND" {
+			if metaResult == "NOT_FOUND" {
 				return output.PrintError("note_not_found",
 					fmt.Sprintf("Note not found: %s", noteName),
 					map[string]string{"name": noteName, "folder": folder})
 			}
 
-			parts := strings.Split(result, "|||")
-			if len(parts) < 5 {
-				return output.PrintError("parse_failed", "Failed to parse note data", nil)
+			metaParts := strings.Split(metaResult, "|||")
+			if len(metaParts) < 3 {
+				return output.PrintError("parse_failed", "Failed to parse note metadata", nil)
+			}
+
+			// Fetch the HTML body separately to preserve formatting
+			bodyScript := fmt.Sprintf(`
+tell application "Notes"
+	set targetName to "%s"
+	repeat with theFolder in folders
+		set folderName to name of theFolder
+		if folderName is not "Recently Deleted" then
+			repeat with theNote in notes of theFolder
+				if name of theNote is targetName then
+					return body of theNote
+				end if
+			end repeat
+		end if
+	end repeat
+	return ""
+end tell`, escapeAppleScript(noteName))
+
+			htmlBody, err := runAppleScript(bodyScript)
+			if err != nil {
+				htmlBody = ""
 			}
 
 			note := Note{
-				Name:       strings.TrimSpace(parts[0]),
-				Body:       strings.TrimSpace(parts[1]),
-				Folder:     strings.TrimSpace(parts[2]),
-				CreatedAt:  strings.TrimSpace(parts[3]),
-				ModifiedAt: strings.TrimSpace(parts[4]),
+				Name:       noteName,
+				Body:       htmlToPlaintext(htmlBody),
+				Folder:     strings.TrimSpace(metaParts[0]),
+				CreatedAt:  strings.TrimSpace(metaParts[1]),
+				ModifiedAt: strings.TrimSpace(metaParts[2]),
 			}
 
 			return output.Print(note)
