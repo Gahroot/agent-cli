@@ -59,11 +59,14 @@ func newTextCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			text := strings.Join(args, " ")
 
-			langpair := fmt.Sprintf("%s|%s", fromLang, toLang)
+			// Build the langpair as "from|to". The pipe must NOT be percent-encoded
+			// because the MyMemory API requires a literal pipe separator.
+			// url.QueryEscape would encode | to %7C, breaking the API call.
+			langpair := fmt.Sprintf("%s|%s", url.QueryEscape(fromLang), url.QueryEscape(toLang))
 			reqURL := fmt.Sprintf("%s/get?q=%s&langpair=%s",
 				baseURL,
 				url.QueryEscape(text),
-				url.QueryEscape(langpair))
+				langpair)
 
 			resp, err := doRequest(reqURL)
 			if err != nil {
@@ -78,6 +81,11 @@ func newTextCmd() *cobra.Command {
 					Match          float64 `json:"match"`
 				} `json:"responseData"`
 				ResponseDetails string `json:"responseDetails"`
+				Matches         []struct {
+					Translation string  `json:"translation"`
+					Match       float64 `json:"match"`
+					Quality     any     `json:"quality"`
+				} `json:"matches"`
 			}
 
 			if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
@@ -92,12 +100,23 @@ func newTextCmd() *cobra.Command {
 				return output.PrintError("api_error", msg, nil)
 			}
 
+			// Select the best translation from matches. The responseData.translatedText
+			// can sometimes return garbage from low-quality community contributions.
+			// We look through all matches and pick the most frequently occurring
+			// translation among those with the highest match score.
+			translatedText := data.ResponseData.TranslatedText
+			matchScore := data.ResponseData.Match
+
+			if len(data.Matches) > 1 {
+				translatedText, matchScore = bestTranslation(data.Matches)
+			}
+
 			translation := Translation{
 				SourceText:     text,
-				TranslatedText: data.ResponseData.TranslatedText,
+				TranslatedText: translatedText,
 				SourceLang:     fromLang,
 				TargetLang:     toLang,
-				Match:          data.ResponseData.Match,
+				Match:          matchScore,
 			}
 
 			return output.Print(translation)
@@ -154,6 +173,51 @@ func newLanguagesCmd() *cobra.Command {
 	}
 
 	return cmd
+}
+
+// bestTranslation picks the most reliable translation from the matches array.
+// MyMemory's top responseData result can be wrong due to bad community data.
+// This function finds the highest match score, then among all translations
+// with that score, returns the one that appears most frequently.
+func bestTranslation(matches []struct {
+	Translation string  `json:"translation"`
+	Match       float64 `json:"match"`
+	Quality     any     `json:"quality"`
+}) (string, float64) {
+	if len(matches) == 0 {
+		return "", 0
+	}
+
+	// Find the highest match score
+	bestScore := matches[0].Match
+	for _, m := range matches[1:] {
+		if m.Match > bestScore {
+			bestScore = m.Match
+		}
+	}
+
+	// Count occurrences of each translation at the best score
+	counts := make(map[string]int)
+	for _, m := range matches {
+		if m.Match == bestScore {
+			counts[strings.ToLower(m.Translation)]++
+		}
+	}
+
+	// Find the most frequent translation
+	bestTrans := matches[0].Translation
+	bestCount := 0
+	for _, m := range matches {
+		if m.Match == bestScore {
+			c := counts[strings.ToLower(m.Translation)]
+			if c > bestCount {
+				bestCount = c
+				bestTrans = m.Translation
+			}
+		}
+	}
+
+	return bestTrans, bestScore
 }
 
 func doRequest(reqURL string) (*http.Response, error) {

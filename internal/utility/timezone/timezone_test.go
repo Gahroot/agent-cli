@@ -30,25 +30,7 @@ func TestNewCmd(t *testing.T) {
 }
 
 func TestGetCmd(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		data := map[string]any{
-			"timezone":     "America/New_York",
-			"datetime":     "2024-01-15T10:30:45-05:00",
-			"utc_offset":   "-05:00",
-			"day_of_week":  1,
-			"week_number":  3,
-			"dst":          false,
-			"abbreviation": "EST",
-			"unixtime":     1705328445,
-		}
-		json.NewEncoder(w).Encode(data)
-	}))
-	defer srv.Close()
-
-	oldURL := baseURL
-	baseURL = srv.URL
-	defer func() { baseURL = oldURL }()
-
+	// get command now uses Go's built-in time.LoadLocation, no HTTP needed
 	cmd := newGetCmd()
 	cmd.SetArgs([]string{"America/New_York"})
 	err := cmd.Execute()
@@ -58,16 +40,7 @@ func TestGetCmd(t *testing.T) {
 }
 
 func TestGetNotFound(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-		json.NewEncoder(w).Encode(map[string]string{"error": "timezone not found"})
-	}))
-	defer srv.Close()
-
-	oldURL := baseURL
-	baseURL = srv.URL
-	defer func() { baseURL = oldURL }()
-
+	// get command now uses Go's built-in time.LoadLocation
 	cmd := newGetCmd()
 	cmd.SetArgs([]string{"Invalid/Timezone"})
 	err := cmd.Execute()
@@ -79,14 +52,19 @@ func TestGetNotFound(t *testing.T) {
 func TestIPCmd(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		data := map[string]any{
-			"timezone":     "America/Los_Angeles",
-			"datetime":     "2024-01-15T07:30:45-08:00",
-			"utc_offset":   "-08:00",
-			"day_of_week":  1,
-			"week_number":  3,
-			"dst":          false,
-			"abbreviation": "PST",
-			"unixtime":     1705328445,
+			"year":      2024,
+			"month":     1,
+			"day":       15,
+			"hour":      7,
+			"minute":    30,
+			"seconds":   45,
+			"dateTime":  "2024-01-15T07:30:45",
+			"timeZone":  "America/Los_Angeles",
+			"dayOfWeek": "Monday",
+			"dstActive": false,
+			"currentUtcOffset": map[string]any{
+				"seconds": -28800,
+			},
 		}
 		json.NewEncoder(w).Encode(data)
 	}))
@@ -105,23 +83,7 @@ func TestIPCmd(t *testing.T) {
 }
 
 func TestListCmd(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		data := []string{
-			"America/New_York",
-			"America/Los_Angeles",
-			"Europe/London",
-			"Europe/Paris",
-			"Asia/Tokyo",
-			"Asia/Shanghai",
-		}
-		json.NewEncoder(w).Encode(data)
-	}))
-	defer srv.Close()
-
-	oldURL := baseURL
-	baseURL = srv.URL
-	defer func() { baseURL = oldURL }()
-
+	// list command now uses built-in timezone list, no HTTP needed
 	cmd := newListCmd()
 	err := cmd.Execute()
 	if err != nil {
@@ -129,7 +91,7 @@ func TestListCmd(t *testing.T) {
 	}
 }
 
-func TestFetchTimezoneHTTPError(t *testing.T) {
+func TestFetchTimezoneByIPHTTPError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
@@ -139,13 +101,29 @@ func TestFetchTimezoneHTTPError(t *testing.T) {
 	baseURL = srv.URL
 	defer func() { baseURL = oldURL }()
 
-	err := fetchTimezone(srv.URL + "/test")
+	err := fetchTimezoneByIP("8.8.8.8")
 	if err == nil {
 		t.Error("expected HTTP error, got nil")
 	}
 }
 
-func TestFetchTimezoneParseError(t *testing.T) {
+func TestFetchTimezoneByIPNotFound(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	oldURL := baseURL
+	baseURL = srv.URL
+	defer func() { baseURL = oldURL }()
+
+	err := fetchTimezoneByIP("0.0.0.0")
+	if err == nil {
+		t.Error("expected not found error, got nil")
+	}
+}
+
+func TestFetchTimezoneByIPParseError(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("invalid json"))
 	}))
@@ -155,40 +133,30 @@ func TestFetchTimezoneParseError(t *testing.T) {
 	baseURL = srv.URL
 	defer func() { baseURL = oldURL }()
 
-	err := fetchTimezone(srv.URL + "/test")
+	err := fetchTimezoneByIP("8.8.8.8")
 	if err == nil {
 		t.Error("expected parse error, got nil")
 	}
 }
 
-func TestListTimezonesHTTPError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusServiceUnavailable)
-	}))
-	defer srv.Close()
-
-	oldURL := baseURL
-	baseURL = srv.URL
-	defer func() { baseURL = oldURL }()
-
-	err := listTimezones()
-	if err == nil {
-		t.Error("expected HTTP error, got nil")
+func TestGetTimezoneLocalUTC(t *testing.T) {
+	// UTC should always work
+	err := getTimezoneLocal("UTC")
+	if err != nil {
+		t.Errorf("getTimezoneLocal(UTC) failed: %v", err)
 	}
 }
 
-func TestListTimezonesParseError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("invalid json"))
-	}))
-	defer srv.Close()
-
-	oldURL := baseURL
-	baseURL = srv.URL
-	defer func() { baseURL = oldURL }()
-
-	err := listTimezones()
+func TestGetTimezoneLocalInvalid(t *testing.T) {
+	err := getTimezoneLocal("Not/A/Real/Zone")
 	if err == nil {
-		t.Error("expected parse error, got nil")
+		t.Error("expected error for invalid timezone, got nil")
+	}
+}
+
+func TestListTimezonesOutput(t *testing.T) {
+	err := listTimezones()
+	if err != nil {
+		t.Errorf("listTimezones failed: %v", err)
 	}
 }

@@ -83,6 +83,7 @@ func NewCmd() *cobra.Command {
 	cmd.AddCommand(newUntagCmd())
 	cmd.AddCommand(newTrashCmd())
 	cmd.AddCommand(newSearchCmd())
+	cmd.AddCommand(newRecentCmd())
 
 	return cmd
 }
@@ -791,28 +792,32 @@ func newSearchCmd() *cobra.Command {
 						Name: filepath.Base(line),
 					}
 
-					// Get additional metadata
+					// Get additional metadata (no -raw flag: parse labeled "key = value" lines)
 					mdlsOutput, err := runCommand("mdls",
 						"-name", "kMDItemContentType",
 						"-name", "kMDItemContentModificationDate",
 						"-name", "kMDItemKind",
-						"-raw", line)
+						line)
 					if err == nil {
-						mdlsLines := strings.Split(mdlsOutput, "\n")
-						for j, mdLine := range mdlsLines {
+						for _, mdLine := range strings.Split(mdlsOutput, "\n") {
 							mdLine = strings.TrimSpace(mdLine)
-							if mdLine == mdlsNull {
-								continue
-							}
-							switch j {
-							case 0:
-								sr.ContentType = mdLine
-							case 1:
-								if t, err := time.Parse("2006-01-02 15:04:05 -0700", mdLine); err == nil {
-									sr.Modified = t.Format(time.RFC3339)
+							if parts := strings.SplitN(mdLine, "=", 2); len(parts) == 2 {
+								key := strings.TrimSpace(parts[0])
+								val := strings.TrimSpace(parts[1])
+								val = strings.Trim(val, "\"")
+								if val == mdlsNull {
+									continue
 								}
-							case 2:
-								sr.Kind = mdLine
+								switch key {
+								case "kMDItemContentType":
+									sr.ContentType = val
+								case "kMDItemContentModificationDate":
+									if t, err := time.Parse("2006-01-02 15:04:05 -0700", val); err == nil {
+										sr.Modified = t.Format(time.RFC3339)
+									}
+								case "kMDItemKind":
+									sr.Kind = val
+								}
 							}
 						}
 					}
@@ -835,6 +840,118 @@ func newSearchCmd() *cobra.Command {
 	cmd.Flags().StringVarP(&onlyIn, "in", "i", "", "Search within this path (alias for --path)")
 	cmd.Flags().StringVarP(&kind, "kind", "k", "", "Filter by kind: app, folder, image, audio, video, pdf, document, text")
 	cmd.Flags().IntVarP(&limit, "limit", "l", 50, "Limit number of results (default 50)")
+
+	return cmd
+}
+
+// newRecentCmd lists recently modified files using Spotlight
+func newRecentCmd() *cobra.Command {
+	var dir string
+	var limit int
+	var days int
+
+	cmd := &cobra.Command{
+		Use:   "recent",
+		Short: "List recently modified files",
+		Long:  `Lists recently modified files using Spotlight (mdfind). Filter by directory and time range.`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			// Build date threshold
+			threshold := time.Now().Add(-time.Duration(days) * 24 * time.Hour)
+			dateStr := threshold.Format("2006-01-02")
+
+			// Build mdfind arguments
+			mdfindArgs := []string{}
+
+			if dir != "" {
+				resolvedDir, err := resolvePath(dir)
+				if err != nil {
+					return output.PrintError("invalid_path", err.Error(), nil)
+				}
+				if stat, err := os.Stat(resolvedDir); err != nil || !stat.IsDir() {
+					return output.PrintError("invalid_path",
+						fmt.Sprintf("Path is not a directory: %s", resolvedDir),
+						map[string]string{"path": resolvedDir})
+				}
+				mdfindArgs = append(mdfindArgs, "-onlyin", resolvedDir)
+			}
+
+			// Query for files modified after the threshold date
+			query := fmt.Sprintf("kMDItemFSContentChangeDate >= $time.iso(%sT00:00:00Z) && kMDItemContentType != 'public.folder'",
+				dateStr)
+			mdfindArgs = append(mdfindArgs, query)
+
+			result, err := runCommand("mdfind", mdfindArgs...)
+			if err != nil {
+				return output.PrintError("recent_failed", err.Error(), nil)
+			}
+
+			type RecentFile struct {
+				Path        string `json:"path"`
+				Name        string `json:"name"`
+				Modified    string `json:"modified,omitempty"`
+				Size        int64  `json:"size"`
+				SizeHuman   string `json:"size_human"`
+				ContentType string `json:"content_type,omitempty"`
+			}
+
+			var results []RecentFile
+			if result != "" {
+				lines := strings.Split(result, "\n")
+				for _, line := range lines {
+					if limit > 0 && len(results) >= limit {
+						break
+					}
+					line = strings.TrimSpace(line)
+					if line == "" {
+						continue
+					}
+
+					rf := RecentFile{
+						Path: line,
+						Name: filepath.Base(line),
+					}
+
+					// Get file size from stat
+					if stat, err := os.Stat(line); err == nil {
+						rf.Size = stat.Size()
+						rf.SizeHuman = humanReadableSize(stat.Size())
+						rf.Modified = stat.ModTime().Format(time.RFC3339)
+					}
+
+					// Get content type from mdls
+					mdlsOutput, err := runCommand("mdls",
+						"-name", "kMDItemContentType",
+						line)
+					if err == nil {
+						for _, mdLine := range strings.Split(mdlsOutput, "\n") {
+							mdLine = strings.TrimSpace(mdLine)
+							if parts := strings.SplitN(mdLine, "=", 2); len(parts) == 2 {
+								key := strings.TrimSpace(parts[0])
+								val := strings.TrimSpace(parts[1])
+								val = strings.Trim(val, "\"")
+								if key == "kMDItemContentType" && val != mdlsNull {
+									rf.ContentType = val
+								}
+							}
+						}
+					}
+
+					results = append(results, rf)
+				}
+			}
+
+			return output.Print(map[string]any{
+				"results": results,
+				"count":   len(results),
+				"days":    days,
+				"dir":     dir,
+			})
+		},
+	}
+
+	cmd.Flags().StringVarP(&dir, "dir", "d", "", "Search within this directory")
+	cmd.Flags().IntVarP(&limit, "limit", "l", 20, "Limit number of results (default 20)")
+	cmd.Flags().IntVarP(&days, "days", "D", 7, "Number of days to look back (default 7)")
 
 	return cmd
 }

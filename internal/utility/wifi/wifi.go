@@ -2,6 +2,7 @@ package wifi
 
 import (
 	"bufio"
+	"encoding/json"
 	"fmt"
 	"os/exec"
 	"regexp"
@@ -40,8 +41,6 @@ type ConnectionInfo struct {
 	Security  string `json:"security,omitempty"`
 	Connected bool   `json:"connected"`
 }
-
-const airportPath = "/System/Library/PrivateFrameworks/Apple80211.framework/Versions/Current/Resources/airport"
 
 func NewCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -102,16 +101,41 @@ func currentConnection() error {
 	}
 }
 
-// macOS implementation using airport utility
+// systemProfilerAirPort represents the JSON structure from system_profiler SPAirPortDataType -json
+type systemProfilerAirPort struct {
+	SPAirPortDataType []struct {
+		Interfaces []spAirPortInterface `json:"spairport_airport_interfaces"`
+	} `json:"SPAirPortDataType"`
+}
+
+type spAirPortInterface struct {
+	Name           string             `json:"_name"`
+	Status         string             `json:"spairport_status_information"`
+	CurrentNetwork *spAirPortNetwork  `json:"spairport_current_network_information"`
+	OtherNetworks  []spAirPortNetwork `json:"spairport_airport_other_local_wireless_networks"`
+	MACAddress     string             `json:"spairport_wireless_mac_address"`
+}
+
+type spAirPortNetwork struct {
+	Name         string `json:"_name"`
+	Channel      string `json:"spairport_network_channel"`
+	SecurityMode string `json:"spairport_security_mode"`
+	SignalNoise  string `json:"spairport_signal_noise"`
+	PhyMode      string `json:"spairport_network_phymode"`
+	Rate         int    `json:"spairport_network_rate"`
+	MCS          int    `json:"spairport_network_mcs"`
+}
+
+// macOS implementation using system_profiler (airport CLI was removed in macOS 14 Sonoma)
 func scanDarwin() error {
-	out, err := exec.Command(airportPath, "-s").CombinedOutput()
+	out, err := exec.Command("system_profiler", "SPAirPortDataType", "-json").CombinedOutput()
 	if err != nil {
 		return output.PrintError("wifi_scan_error",
-			fmt.Sprintf("airport scan failed: %v", err),
+			fmt.Sprintf("system_profiler failed: %v", err),
 			map[string]string{"suggestion": "WiFi may be disabled"})
 	}
 
-	networks := parseAirportScan(string(out))
+	networks := parseSystemProfilerScan(out)
 
 	return output.Print(ScanResult{
 		Networks: networks,
@@ -120,122 +144,147 @@ func scanDarwin() error {
 }
 
 func currentDarwin() error {
-	out, err := exec.Command(airportPath, "-I").CombinedOutput()
+	out, err := exec.Command("system_profiler", "SPAirPortDataType", "-json").CombinedOutput()
 	if err != nil {
 		return output.PrintError("wifi_info_error",
-			fmt.Sprintf("airport info failed: %v", err),
+			fmt.Sprintf("system_profiler failed: %v", err),
 			map[string]string{"suggestion": "WiFi may be disabled"})
 	}
 
-	info := parseAirportInfo(string(out))
+	info := parseSystemProfilerCurrent(out)
 	return output.Print(info)
 }
 
-func parseAirportScan(data string) []Network {
+// parseSystemProfilerScan extracts nearby networks from system_profiler JSON output
+func parseSystemProfilerScan(data []byte) []Network {
+	iface := findWiFiInterface(data)
+	if iface == nil {
+		return nil
+	}
+
 	var networks []Network
-	scanner := bufio.NewScanner(strings.NewReader(data))
-
-	// Skip header line
-	scanner.Scan()
-
-	for scanner.Scan() {
-		line := scanner.Text()
-		if strings.TrimSpace(line) == "" {
-			continue
+	for _, net := range iface.OtherNetworks {
+		n := Network{
+			SSID:     net.Name,
+			Channel:  parseChannelNumber(net.Channel),
+			Security: cleanSecurityMode(net.SecurityMode),
 		}
-
-		n := parseAirportScanLine(line)
-		if n.SSID != "" || n.BSSID != "" {
+		rssi, _ := parseSignalNoise(net.SignalNoise)
+		if rssi != 0 {
+			n.RSSI = rssi
+		}
+		if n.SSID != "" {
 			networks = append(networks, n)
 		}
 	}
-	// scanner.Err() always nil for strings.NewReader, but good practice
-	_ = scanner.Err()
 
 	return networks
 }
 
-func parseAirportScanLine(line string) Network {
-	// airport -s output format (fixed-width columns):
-	// SSID                 BSSID             RSSI CHANNEL HT CC SECURITY
-	// The SSID can be up to 32 chars and right-aligned to column 33
-
-	n := Network{}
-
-	// Find BSSID pattern to determine column positions
-	bssidRegex := regexp.MustCompile(`([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}`)
-	bssidLoc := bssidRegex.FindStringIndex(line)
-	if bssidLoc == nil {
-		return n
-	}
-
-	n.SSID = strings.TrimSpace(line[:bssidLoc[0]])
-	n.BSSID = strings.TrimSpace(line[bssidLoc[0]:bssidLoc[1]])
-
-	// Parse remaining fields after BSSID
-	rest := strings.TrimSpace(line[bssidLoc[1]:])
-	fields := strings.Fields(rest)
-
-	if len(fields) >= 1 {
-		if rssi, err := strconv.Atoi(fields[0]); err == nil {
-			n.RSSI = rssi
-		}
-	}
-	if len(fields) >= 2 {
-		// Channel may be like "6" or "36,+1"
-		chStr := strings.Split(fields[1], ",")[0]
-		if ch, err := strconv.Atoi(chStr); err == nil {
-			n.Channel = ch
-		}
-	}
-	if len(fields) >= 5 {
-		n.Security = strings.Join(fields[4:], " ")
-	}
-
-	return n
-}
-
-func parseAirportInfo(data string) ConnectionInfo {
+// parseSystemProfilerCurrent extracts the current connection from system_profiler JSON output
+func parseSystemProfilerCurrent(data []byte) ConnectionInfo {
 	info := ConnectionInfo{}
-	scanner := bufio.NewScanner(strings.NewReader(data))
 
-	for scanner.Scan() {
-		line := scanner.Text()
-		parts := strings.SplitN(line, ":", 2)
-		if len(parts) != 2 {
-			continue
-		}
+	iface := findWiFiInterface(data)
+	if iface == nil {
+		return info
+	}
 
-		key := strings.TrimSpace(parts[0])
-		val := strings.TrimSpace(parts[1])
+	if iface.Status != "spairport_status_connected" || iface.CurrentNetwork == nil {
+		return info
+	}
 
-		switch key {
-		case "SSID":
-			info.SSID = val
-			info.Connected = true
-		case "BSSID":
-			info.BSSID = val
-		case "agrCtlRSSI":
-			if v, err := strconv.Atoi(val); err == nil {
-				info.RSSI = v
-			}
-		case "agrCtlNoise":
-			if v, err := strconv.Atoi(val); err == nil {
-				info.Noise = v
-			}
-		case "channel":
-			chStr := strings.Split(val, ",")[0]
-			if v, err := strconv.Atoi(chStr); err == nil {
-				info.Channel = v
-			}
-		case "lastTxRate":
-			info.TxRate = val + " Mbps"
-		case "link auth":
-			info.Security = val
-		}
+	cur := iface.CurrentNetwork
+	info.SSID = cur.Name
+	info.Connected = cur.Name != ""
+	info.Channel = parseChannelNumber(cur.Channel)
+	info.Security = cleanSecurityMode(cur.SecurityMode)
+
+	rssi, noise := parseSignalNoise(cur.SignalNoise)
+	if rssi != 0 {
+		info.RSSI = rssi
+	}
+	if noise != 0 {
+		info.Noise = noise
+	}
+
+	if cur.Rate > 0 {
+		info.TxRate = strconv.Itoa(cur.Rate) + " Mbps"
 	}
 
 	return info
+}
+
+// findWiFiInterface locates the primary WiFi interface (en0) from system_profiler JSON
+func findWiFiInterface(data []byte) *spAirPortInterface {
+	var sp systemProfilerAirPort
+	if err := json.Unmarshal(data, &sp); err != nil {
+		return nil
+	}
+
+	if len(sp.SPAirPortDataType) == 0 {
+		return nil
+	}
+
+	for i, iface := range sp.SPAirPortDataType[0].Interfaces {
+		if iface.Name == "en0" {
+			return &sp.SPAirPortDataType[0].Interfaces[i]
+		}
+	}
+
+	// Fall back to first interface if en0 not found
+	if len(sp.SPAirPortDataType[0].Interfaces) > 0 {
+		return &sp.SPAirPortDataType[0].Interfaces[0]
+	}
+
+	return nil
+}
+
+// parseChannelNumber extracts the numeric channel from strings like "40 (5GHz, 80MHz)"
+func parseChannelNumber(ch string) int {
+	if ch == "" {
+		return 0
+	}
+	// Take the first space-delimited token
+	parts := strings.Fields(ch)
+	if len(parts) == 0 {
+		return 0
+	}
+	v, err := strconv.Atoi(parts[0])
+	if err != nil {
+		return 0
+	}
+	return v
+}
+
+// cleanSecurityMode converts system_profiler security mode strings to human-readable form
+// e.g., "spairport_security_mode_wpa2_personal" -> "wpa2-personal"
+func cleanSecurityMode(mode string) string {
+	if mode == "" {
+		return ""
+	}
+	// Strip the "spairport_security_mode_" prefix
+	const prefix = "spairport_security_mode_"
+	if strings.HasPrefix(mode, prefix) {
+		mode = mode[len(prefix):]
+	}
+	// Replace underscores with hyphens for readability
+	return strings.ReplaceAll(mode, "_", "-")
+}
+
+// parseSignalNoise extracts RSSI and noise from strings like "-48 dBm / -92 dBm"
+func parseSignalNoise(sn string) (rssi int, noise int) {
+	if sn == "" {
+		return 0, 0
+	}
+	// Match pattern like "-48 dBm / -92 dBm"
+	re := regexp.MustCompile(`(-?\d+)\s*dBm\s*/\s*(-?\d+)\s*dBm`)
+	m := re.FindStringSubmatch(sn)
+	if len(m) == 3 {
+		rssi, _ = strconv.Atoi(m[1])
+		noise, _ = strconv.Atoi(m[2])
+	}
+	return rssi, noise
 }
 
 // Linux implementation using nmcli

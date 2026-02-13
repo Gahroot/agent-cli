@@ -2,15 +2,20 @@ package contacts
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os/exec"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/unstablemind/pocket/pkg/output"
 )
+
+// appleScriptTimeout is the maximum duration for any AppleScript execution.
+const appleScriptTimeout = 30 * time.Second
 
 // Contact represents a contact in Apple Contacts
 type Contact struct {
@@ -99,15 +104,22 @@ func escapeAppleScript(s string) string {
 	return s
 }
 
-// runAppleScript executes an AppleScript and returns the output
-func runAppleScript(script string) (string, error) {
-	cmd := exec.Command("osascript", "-e", script)
+// runOsascript executes an osascript command with a timeout and returns the output.
+// The lang parameter specifies the scripting language ("AppleScript" or "JavaScript").
+func runOsascript(lang string, script string) (string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), appleScriptTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "osascript", "-l", lang, "-e", script)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 
 	err := cmd.Run()
 	if err != nil {
+		if ctx.Err() == context.DeadlineExceeded {
+			return "", fmt.Errorf("osascript timed out after %s", appleScriptTimeout)
+		}
 		errMsg := stderr.String()
 		if errMsg == "" {
 			errMsg = err.Error()
@@ -118,6 +130,16 @@ func runAppleScript(script string) (string, error) {
 	return strings.TrimSpace(stdout.String()), nil
 }
 
+// runAppleScript executes an AppleScript with a timeout and returns the output
+func runAppleScript(script string) (string, error) {
+	return runOsascript("AppleScript", script)
+}
+
+// runJXA executes a JavaScript for Automation (JXA) script with a timeout
+func runJXA(script string) (string, error) {
+	return runOsascript("JavaScript", script)
+}
+
 // newListCmd lists all contacts
 func newListCmd() *cobra.Command {
 	var limit int
@@ -126,31 +148,38 @@ func newListCmd() *cobra.Command {
 		Use:   "list",
 		Short: "List all contacts",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			script := `
-tell application "Contacts"
-	set contactList to {}
-	set peopleList to people
-	repeat with p in peopleList
-		set fullName to name of p
-		set primaryEmail to ""
-		set primaryPhone to ""
-		set companyName to ""
-		try
-			set primaryEmail to value of first email of p
-		end try
-		try
-			set primaryPhone to value of first phone of p
-		end try
-		try
-			set companyName to organization of p
-		end try
-		set end of contactList to fullName & "|||" & primaryEmail & "|||" & primaryPhone & "|||" & companyName
-	end repeat
-	set AppleScript's text item delimiters to ":::"
-	return contactList as text
-end tell`
+			// Use JXA for fast batch property access instead of AppleScript's
+			// per-contact iteration which is extremely slow for large databases.
+			maxResults := limit
+			if maxResults <= 0 {
+				maxResults = 100
+			}
 
-			result, err := runAppleScript(script)
+			script := fmt.Sprintf(`
+var app = Application('Contacts');
+var maxResults = %d;
+
+// Batch-fetch all properties in 4 Apple Event calls
+var names = app.people.name();
+var orgs = app.people.organization();
+var allEmails = app.people.emails.value();
+var allPhones = app.people.phones.value();
+var total = names.length;
+var count = Math.min(total, maxResults);
+
+// Build results entirely from batch-fetched data (no per-contact calls)
+var results = [];
+for (var i = 0; i < count; i++) {
+    var name = names[i] || '';
+    var company = (orgs[i] && typeof orgs[i] === 'string') ? orgs[i] : '';
+    var email = (allEmails[i] && allEmails[i].length > 0) ? allEmails[i][0] : '';
+    var phone = (allPhones[i] && allPhones[i].length > 0) ? allPhones[i][0] : '';
+    results.push(name + '|||' + email + '|||' + phone + '|||' + company);
+}
+total + '~~~' + results.join(':::');
+`, maxResults)
+
+			result, err := runJXA(script)
 			if err != nil {
 				return output.PrintError("list_failed", err.Error(), nil)
 			}
@@ -159,42 +188,73 @@ end tell`
 				return output.Print(map[string]any{
 					"contacts": []ContactSummary{},
 					"count":    0,
+					"total":    0,
+				})
+			}
+
+			// Parse total count and results
+			totalParts := strings.SplitN(result, "~~~", 2)
+			total := 0
+			_, _ = fmt.Sscanf(totalParts[0], "%d", &total)
+
+			contactData := ""
+			if len(totalParts) > 1 {
+				contactData = totalParts[1]
+			}
+
+			if contactData == "" {
+				return output.Print(map[string]any{
+					"contacts": []ContactSummary{},
+					"count":    0,
+					"total":    total,
 				})
 			}
 
 			// Parse the result
 			var contacts []ContactSummary
-			items := strings.Split(result, ":::")
-			count := 0
+			items := strings.Split(contactData, ":::")
 			for _, item := range items {
-				if limit > 0 && count >= limit {
-					break
-				}
 				parts := strings.Split(item, "|||")
 				if len(parts) >= 4 {
-					contacts = append(contacts, ContactSummary{
+					c := ContactSummary{
 						Name:    strings.TrimSpace(parts[0]),
 						Email:   strings.TrimSpace(parts[1]),
 						Phone:   strings.TrimSpace(parts[2]),
 						Company: strings.TrimSpace(parts[3]),
-					})
-					count++
+					}
+					if c.Company == "null" {
+						c.Company = ""
+					}
+					contacts = append(contacts, c)
 				}
 			}
 
 			return output.Print(map[string]any{
 				"contacts": contacts,
 				"count":    len(contacts),
+				"total":    total,
 			})
 		},
 	}
 
-	cmd.Flags().IntVarP(&limit, "limit", "l", 0, "Limit number of contacts (0 = no limit)")
+	cmd.Flags().IntVarP(&limit, "limit", "l", 0, "Limit number of contacts (0 = all, default 100)")
 
 	return cmd
 }
 
+// escapeJSString escapes special characters for JavaScript string literals
+func escapeJSString(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, "'", "\\'")
+	s = strings.ReplaceAll(s, "\"", "\\\"")
+	s = strings.ReplaceAll(s, "\n", "\\n")
+	s = strings.ReplaceAll(s, "\r", "\\r")
+	return s
+}
+
 // newSearchCmd searches contacts
+//
+//nolint:gocyclo // sequential JXA script construction with clear logic
 func newSearchCmd() *cobra.Command {
 	var limit int
 
@@ -203,77 +263,83 @@ func newSearchCmd() *cobra.Command {
 		Short: "Search contacts by name, email, or phone",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			query := strings.ToLower(args[0])
+			query := args[0]
 
+			// Default limit for search to avoid unbounded results
+			maxResults := limit
+			if maxResults <= 0 {
+				maxResults = 50
+			}
+
+			// Use JXA (JavaScript for Automation) for fast batch property access.
+			// AppleScript's "repeat with p in people" makes individual Apple Event
+			// IPC calls per contact, which is extremely slow for large databases.
+			// JXA's batch property access (e.g., app.people.name()) fetches all
+			// values in a single Apple Event call, making it orders of magnitude
+			// faster.
 			script := fmt.Sprintf(`
-tell application "Contacts"
-	set matchingContacts to {}
-	set searchQuery to "%s"
-	repeat with p in people
-		set fullName to name of p
-		set lowerName to do shell script "echo " & quoted form of fullName & " | tr '[:upper:]' '[:lower:]'"
-		set matched to false
+var app = Application('Contacts');
+var query = '%s'.toLowerCase();
+var maxResults = %d;
 
-		-- Check name
-		if lowerName contains searchQuery then
-			set matched to true
-		end if
+// Batch-fetch all properties in just 4 Apple Event calls (instead of N*4)
+var names = app.people.name();
+var orgs = app.people.organization();
+var allEmails = app.people.emails.value();
+var allPhones = app.people.phones.value();
 
-		-- Check emails
-		if not matched then
-			repeat with e in emails of p
-				set emailVal to value of e
-				set lowerEmail to do shell script "echo " & quoted form of emailVal & " | tr '[:upper:]' '[:lower:]'"
-				if lowerEmail contains searchQuery then
-					set matched to true
-					exit repeat
-				end if
-			end repeat
-		end if
+// Find matching contact indices (all in-memory, fast)
+var matchIndices = [];
+var matched = {};
+for (var i = 0; i < names.length && matchIndices.length < maxResults; i++) {
+    var n = (names[i] || '').toLowerCase();
+    var o = (orgs[i] && typeof orgs[i] === 'string') ? orgs[i].toLowerCase() : '';
 
-		-- Check phones
-		if not matched then
-			repeat with ph in phones of p
-				set phoneVal to value of ph
-				if phoneVal contains searchQuery then
-					set matched to true
-					exit repeat
-				end if
-			end repeat
-		end if
+    if (n.indexOf(query) >= 0 || o.indexOf(query) >= 0) {
+        matchIndices.push(i);
+        matched[i] = true;
+        continue;
+    }
 
-		-- Check company
-		if not matched then
-			try
-				set companyName to organization of p
-				set lowerCompany to do shell script "echo " & quoted form of companyName & " | tr '[:upper:]' '[:lower:]'"
-				if lowerCompany contains searchQuery then
-					set matched to true
-				end if
-			end try
-		end if
+    // Check emails
+    var found = false;
+    var emails = allEmails[i] || [];
+    for (var e = 0; e < emails.length; e++) {
+        if (emails[e] && emails[e].toLowerCase().indexOf(query) >= 0) {
+            found = true; break;
+        }
+    }
 
-		if matched then
-			set primaryEmail to ""
-			set primaryPhone to ""
-			set companyName to ""
-			try
-				set primaryEmail to value of first email of p
-			end try
-			try
-				set primaryPhone to value of first phone of p
-			end try
-			try
-				set companyName to organization of p
-			end try
-			set end of matchingContacts to fullName & "|||" & primaryEmail & "|||" & primaryPhone & "|||" & companyName
-		end if
-	end repeat
-	set AppleScript's text item delimiters to ":::"
-	return matchingContacts as text
-end tell`, escapeAppleScript(query))
+    // Check phones
+    if (!found) {
+        var phones = allPhones[i] || [];
+        for (var ph = 0; ph < phones.length; ph++) {
+            if (phones[ph] && phones[ph].indexOf(query) >= 0) {
+                found = true; break;
+            }
+        }
+    }
 
-			result, err := runAppleScript(script)
+    if (found) {
+        matchIndices.push(i);
+        matched[i] = true;
+    }
+}
+
+// Fetch primary email/phone only for matched contacts
+var results = [];
+for (var j = 0; j < matchIndices.length; j++) {
+    var idx = matchIndices[j];
+    var name = names[idx] || '';
+    var company = (orgs[idx] && typeof orgs[idx] === 'string') ? orgs[idx] : '';
+    var email = (allEmails[idx] && allEmails[idx].length > 0) ? allEmails[idx][0] : '';
+    var phone = (allPhones[idx] && allPhones[idx].length > 0) ? allPhones[idx][0] : '';
+    results.push(name + '|||' + email + '|||' + phone + '|||' + company);
+}
+results.join(':::');
+`, escapeJSString(query), maxResults)
+
+			result, err := runJXA(script)
 			if err != nil {
 				return output.PrintError("search_failed", err.Error(), nil)
 			}
@@ -289,20 +355,20 @@ end tell`, escapeAppleScript(query))
 			// Parse the result
 			var contacts []ContactSummary
 			items := strings.Split(result, ":::")
-			count := 0
 			for _, item := range items {
-				if limit > 0 && count >= limit {
-					break
-				}
 				parts := strings.Split(item, "|||")
 				if len(parts) >= 4 {
-					contacts = append(contacts, ContactSummary{
+					c := ContactSummary{
 						Name:    strings.TrimSpace(parts[0]),
 						Email:   strings.TrimSpace(parts[1]),
 						Phone:   strings.TrimSpace(parts[2]),
 						Company: strings.TrimSpace(parts[3]),
-					})
-					count++
+					}
+					// JXA returns "null" for missing properties
+					if c.Company == "null" {
+						c.Company = ""
+					}
+					contacts = append(contacts, c)
 				}
 			}
 
@@ -314,7 +380,7 @@ end tell`, escapeAppleScript(query))
 		},
 	}
 
-	cmd.Flags().IntVarP(&limit, "limit", "l", 0, "Limit number of results (0 = no limit)")
+	cmd.Flags().IntVarP(&limit, "limit", "l", 0, "Limit number of results (0 = all, default 50)")
 
 	return cmd
 }

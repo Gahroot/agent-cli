@@ -527,7 +527,7 @@ var allIntegrations = []Integration{
 		Group:       "system",
 		Description: "Manage Apple Calendar events via AppleScript (macOS only)",
 		AuthNeeded:  false,
-		Commands:    []string{"pocket system calendar calendars", "pocket system calendar today", "pocket system calendar events", "pocket system calendar event [title]", "pocket system calendar create [title]", "pocket system calendar upcoming", "pocket system calendar week"},
+		Commands:    []string{"pocket system apple-calendar calendars", "pocket system apple-calendar today", "pocket system apple-calendar events", "pocket system apple-calendar event [title]", "pocket system apple-calendar create [title]", "pocket system apple-calendar upcoming", "pocket system apple-calendar week"},
 	},
 	{
 		ID:          "contacts",

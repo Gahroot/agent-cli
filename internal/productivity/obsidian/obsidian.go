@@ -99,6 +99,23 @@ func getVaultPath(vaultName string) (string, error) {
 	return vaultPath, nil
 }
 
+// validateInsideVault ensures the resolved path is inside the vault directory
+func validateInsideVault(vaultPath, fullPath string) error {
+	absVault, err := filepath.Abs(vaultPath)
+	if err != nil {
+		return fmt.Errorf("failed to resolve vault path: %w", err)
+	}
+	absTarget, err := filepath.Abs(fullPath)
+	if err != nil {
+		return fmt.Errorf("failed to resolve target path: %w", err)
+	}
+	// Ensure the target is within the vault (prefix check with separator)
+	if !strings.HasPrefix(absTarget, absVault+string(filepath.Separator)) && absTarget != absVault {
+		return fmt.Errorf("path escapes vault directory")
+	}
+	return nil
+}
+
 // getDailyFormat returns the daily note format
 func getDailyFormat() string {
 	format, err := config.Get("obsidian_daily_format")
@@ -169,6 +186,10 @@ func newNotesCmd() *cobra.Command {
 			searchPath := vaultPath
 			if folder != "" {
 				searchPath = filepath.Join(vaultPath, folder)
+				// Prevent path traversal
+				if err := validateInsideVault(vaultPath, searchPath); err != nil {
+					return output.PrintError("invalid_path", "Invalid folder path: "+err.Error(), nil)
+				}
 				if _, err := os.Stat(searchPath); os.IsNotExist(err) {
 					return output.PrintError("folder_not_found", "Folder does not exist: "+folder, nil)
 				}
@@ -258,12 +279,20 @@ func newReadCmd() *cobra.Command {
 			}
 
 			notePath := args[0]
+			if strings.TrimSpace(notePath) == "" {
+				return output.PrintError("invalid_input", "Note name cannot be empty", nil)
+			}
 			// Add .md extension if not present
 			if !strings.HasSuffix(strings.ToLower(notePath), ".md") {
 				notePath += ".md"
 			}
 
 			fullPath := filepath.Join(vaultPath, notePath)
+
+			// Prevent path traversal
+			if err := validateInsideVault(vaultPath, fullPath); err != nil {
+				return output.PrintError("invalid_path", "Invalid note path: "+err.Error(), nil)
+			}
 
 			// Check if file exists
 			info, err := os.Stat(fullPath)
@@ -321,12 +350,21 @@ func newWriteCmd() *cobra.Command {
 			notePath := args[0]
 			content := args[1]
 
+			if strings.TrimSpace(notePath) == "" {
+				return output.PrintError("invalid_input", "Note name cannot be empty", nil)
+			}
+
 			// Add .md extension if not present
 			if !strings.HasSuffix(strings.ToLower(notePath), ".md") {
 				notePath += ".md"
 			}
 
 			fullPath := filepath.Join(vaultPath, notePath)
+
+			// Prevent path traversal
+			if err := validateInsideVault(vaultPath, fullPath); err != nil {
+				return output.PrintError("invalid_path", "Invalid note path: "+err.Error(), nil)
+			}
 
 			// Ensure parent directory exists
 			parentDir := filepath.Dir(fullPath)
@@ -549,6 +587,11 @@ func newDailyCmd() *cobra.Command {
 			}
 
 			fullPath := filepath.Join(vaultPath, notePath)
+
+			// Prevent path traversal
+			if err := validateInsideVault(vaultPath, fullPath); err != nil {
+				return output.PrintError("invalid_path", "Invalid path: "+err.Error(), nil)
+			}
 
 			// Check if file exists
 			info, statErr := os.Stat(fullPath)
