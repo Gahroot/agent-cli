@@ -1,7 +1,7 @@
 # 🛠️ Pocket CLI
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/KenKaiii/pocket-agent/main/assets/icon_rounded_1024.png" alt="Pocket CLI" width="200">
+  <img src="https://raw.githubusercontent.com/Gahroot/pocket-agent/main/assets/icon_rounded_1024.png" alt="Pocket CLI" width="200">
 </p>
 
 <p align="center">
@@ -9,10 +9,10 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/KenKaiii/pocket-agent-cli/releases/latest"><img src="https://img.shields.io/github/v/release/KenKaiii/pocket-agent-cli?include_prereleases&style=for-the-badge" alt="GitHub release"></a>
+  <a href="https://github.com/Gahroot/agent-cli/releases/latest"><img src="https://img.shields.io/github/v/release/Gahroot/agent-cli?include_prereleases&style=for-the-badge" alt="GitHub release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg?style=for-the-badge" alt="MIT License"></a>
-  <a href="https://youtube.com/@kenkaidoesai"><img src="https://img.shields.io/badge/YouTube-FF0000?style=for-the-badge&logo=youtube&logoColor=white" alt="YouTube"></a>
-  <a href="https://skool.com/kenkai"><img src="https://img.shields.io/badge/Skool-Community-7C3AED?style=for-the-badge" alt="Skool"></a>
+  <a href="https://youtube.com/@Gahroot"><img src="https://img.shields.io/badge/YouTube-FF0000?style=for-the-badge&logo=youtube&logoColor=white" alt="YouTube"></a>
+  <a href="https://skool.com/kenkaidoesai"><img src="https://img.shields.io/badge/Skool-Community-7C3AED?style=for-the-badge" alt="Skool"></a>
 </p>
 
 **Pocket CLI** gives your AI assistant the power to actually *do things* on the internet — check emails, browse social media, get news, look up information, and more.
@@ -29,12 +29,12 @@ One command. That's it.
 
 **macOS / Linux:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/KenKaiii/pocket-agent-cli/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Gahroot/agent-cli/main/scripts/install.sh | bash
 ```
 
 **Windows (PowerShell):**
 ```powershell
-irm https://raw.githubusercontent.com/KenKaiii/pocket-agent-cli/main/scripts/install.ps1 | iex
+irm https://raw.githubusercontent.com/Gahroot/agent-cli/main/scripts/install.ps1 | iex
 ```
 
 Works on **macOS** (Intel & Apple Silicon), **Linux**, and **Windows**.
@@ -299,8 +299,8 @@ Your AI knows exactly what went wrong and how to fix it.
 ## 🛠️ For developers
 
 ```bash
-git clone https://github.com/KenKaiii/pocket-agent-cli.git
-cd pocket-agent-cli
+git clone https://github.com/Gahroot/agent-cli.git
+cd agent-cli
 make install
 ```
 
@@ -315,8 +315,8 @@ Stack: Go + Cobra CLI + zero external dependencies at runtime
 
 ## 👥 Community
 
-- [YouTube @kenkaidoesai](https://youtube.com/@kenkaidoesai) — tutorials and demos
-- [Skool community](https://skool.com/kenkai) — come hang out
+- [YouTube @Gahroot](https://youtube.com/@Gahroot) — tutorials and demos
+- [Skool community](https://skool.com/kenkaidoesai) — come hang out
 
 ---
 
@@ -331,5 +331,5 @@ MIT
 </p>
 
 <p align="center">
-  <a href="https://github.com/KenKaiii/pocket-agent-cli/releases/latest"><img src="https://img.shields.io/badge/Install-One%20Command-blue?style=for-the-badge" alt="Install"></a>
+  <a href="https://github.com/Gahroot/agent-cli/releases/latest"><img src="https://img.shields.io/badge/Install-One%20Command-blue?style=for-the-badge" alt="Install"></a>
 </p>

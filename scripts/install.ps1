@@ -1,10 +1,10 @@
 # Pocket CLI Installer for Windows (PowerShell)
-# Usage: irm https://raw.githubusercontent.com/KenKaiii/pocket-agent-cli/main/scripts/install.ps1 | iex
+# Usage: irm https://raw.githubusercontent.com/Gahroot/agent-cli/main/scripts/install.ps1 | iex
 # Compatible with Windows PowerShell 5.1 and PowerShell Core 7+
 
 $ErrorActionPreference = "Stop"
 
-$Repo = "KenKaiii/pocket-agent-cli"
+$Repo = "Gahroot/agent-cli"
 $BinaryName = "pocket.exe"
 $InstallDir = "$env:LOCALAPPDATA\Pocket"
 
