@@ -591,6 +591,47 @@ Note: Use OUTCOME-based objectives for campaigns (e.g. OUTCOME_TRAFFIC, OUTCOME_
 Legacy objectives cause 400 errors on API v24.0+.`,
 		TestCommand: "pocket marketing facebook-ads account",
 	},
+	"followupboss": {
+		Service: "followupboss",
+		Name:    "Follow Up Boss",
+		Keys: []KeyInfo{
+			{Key: "fub_api_key", Description: "API Key from Follow Up Boss", Required: true, Example: "fka_xxxx"},
+			{Key: "fub_base_url", Description: "API Base URL", Required: false, Example: "https://api.followupboss.com/v1"},
+			{Key: "fub_system_key", Description: "System identification key", Required: true},
+			{Key: "fub_system_name", Description: "System identification name", Required: true, Example: "MyCompany-Real-Estate"},
+		},
+		SetupGuide: `1. Go to https://followupboss.com/settings
+2. Navigate to API Access
+3. Generate an API Key
+4. Note your System Key and create a System Name
+5. Run:
+   pocket config set fub_api_key <your-api-key>
+   pocket config set fub_base_url https://api.followupboss.com/v1
+   pocket config set fub_system_key <your-system-key>
+   pocket config set fub_system_name <your-system-name>
+
+The System Name and System Key are required headers for all API requests.`,
+		TestCommand: "pocket realestate fub contacts -l 1",
+	},
+	"dotloop": {
+		Service: "dotloop",
+		Name:    "DotLoop",
+		Keys: []KeyInfo{
+			{Key: "dotloop_token", Description: "OAuth2 access token", Required: true, Example: "xxxx"},
+			{Key: "dotloop_company_id", Description: "Company ID (optional, used as default)", Required: false, Example: "12345"},
+		},
+		SetupGuide: `1. Go to https://dotloop.com/settings
+2. Navigate to API Access / Developer Settings
+3. Create an OAuth application or generate an access token
+4. Copy your access token
+5. (Optional) Find your Company ID from your account settings
+6. Run:
+   pocket config set dotloop_token <your-access-token>
+   pocket config set dotloop_company_id <your-company-id>
+
+Note: The DotLoop API uses OAuth2 Bearer token authentication.`,
+		TestCommand: "pocket realestate dotloop loops -l 1",
+	},
 }
 
 func NewSetupCmd() *cobra.Command {

@@ -121,6 +121,16 @@ type Config struct {
 	// Marketing - Shopify
 	ShopifyStore string `json:"shopify_store,omitempty"`
 	ShopifyToken string `json:"shopify_token,omitempty"`
+
+	// Real Estate - Follow Up Boss
+	FUBAPIKey     string `json:"fub_api_key,omitempty"`
+	FUBBaseURL    string `json:"fub_base_url,omitempty"`
+	FUBSystemKey  string `json:"fub_system_key,omitempty"`
+	FUBSystemName string `json:"fub_system_name,omitempty"`
+
+	// Real Estate - DotLoop
+	DotLoopToken     string `json:"dotloop_token,omitempty"`
+	DotLoopCompanyID string `json:"dotloop_company_id,omitempty"`
 }
 
 // Path returns the config file path
@@ -341,6 +351,18 @@ func Set(key, value string) error {
 		cfg.ShopifyStore = value
 	case "shopify_token":
 		cfg.ShopifyToken = value
+	case "fub_api_key":
+		cfg.FUBAPIKey = value
+	case "fub_base_url":
+		cfg.FUBBaseURL = value
+	case "fub_system_key":
+		cfg.FUBSystemKey = value
+	case "fub_system_name":
+		cfg.FUBSystemName = value
+	case "dotloop_token":
+		cfg.DotLoopToken = value
+	case "dotloop_company_id":
+		cfg.DotLoopCompanyID = value
 	default:
 		return fmt.Errorf("unknown config key: %s", key)
 	}
@@ -506,6 +528,18 @@ func Get(key string) (string, error) {
 		return cfg.ShopifyStore, nil
 	case "shopify_token":
 		return cfg.ShopifyToken, nil
+	case "fub_api_key":
+		return cfg.FUBAPIKey, nil
+	case "fub_base_url":
+		return cfg.FUBBaseURL, nil
+	case "fub_system_key":
+		return cfg.FUBSystemKey, nil
+	case "fub_system_name":
+		return cfg.FUBSystemName, nil
+	case "dotloop_token":
+		return cfg.DotLoopToken, nil
+	case "dotloop_company_id":
+		return cfg.DotLoopCompanyID, nil
 	default:
 		return "", fmt.Errorf("unknown config key: %s", key)
 	}
@@ -597,6 +631,12 @@ func (c *Config) Redacted() map[string]string {
 		"amazon_sp_token_expiry":  c.AmazonSPTokenExpiry,
 		"shopify_store":           c.ShopifyStore,
 		"shopify_token":           redact(c.ShopifyToken),
+		"fub_api_key":             redact(c.FUBAPIKey),
+		"fub_base_url":            c.FUBBaseURL,
+		"fub_system_key":          redact(c.FUBSystemKey),
+		"fub_system_name":         c.FUBSystemName,
+		"dotloop_token":           redact(c.DotLoopToken),
+		"dotloop_company_id":      c.DotLoopCompanyID,
 	}
 }
 

@@ -44,6 +44,7 @@ func NewRootCmd() *cobra.Command {
 	root.AddCommand(commands.NewSystemCmd())
 	root.AddCommand(commands.NewSecurityCmd())
 	root.AddCommand(commands.NewMarketingCmd())
+	root.AddCommand(commands.NewRealEstateCmd())
 
 	return root
 }
