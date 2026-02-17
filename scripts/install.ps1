@@ -4,6 +4,20 @@
 
 $ErrorActionPreference = "Stop"
 
+# Keep window open on error so user can read it
+trap {
+    Write-Host ""
+    Write-Host "============================================" -ForegroundColor Red
+    Write-Host "  INSTALLATION FAILED" -ForegroundColor Red
+    Write-Host "============================================" -ForegroundColor Red
+    Write-Host ""
+    Write-Host $_.Exception.Message -ForegroundColor Red
+    Write-Host ""
+    Write-Host "Press any key to exit..."
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    exit 1
+}
+
 $Repo = "Gahroot/agent-cli"
 $BinaryName = "pocket.exe"
 $InstallDir = "$env:LOCALAPPDATA\Pocket"
@@ -203,3 +217,5 @@ Write-Host ""
 Write-Host "Open a new terminal and run:" -ForegroundColor White
 Write-Host "  pocket commands" -ForegroundColor Yellow
 Write-Host ""
+Write-Host "Press any key to exit..."
+$null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
