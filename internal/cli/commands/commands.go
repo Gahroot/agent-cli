@@ -298,6 +298,21 @@ func getAllCommands() []Group {
 			},
 		},
 		{
+			Name: "realestate",
+			Commands: []Cmd{
+				{Command: "pocket realestate followupboss contacts", Desc: "List contacts", Flags: "-l limit, -s status, -q search"},
+				{Command: "pocket realestate followupboss contact", Desc: "Get contact details", Args: "[id]"},
+				{Command: "pocket realestate followupboss leads", Desc: "List leads/opportunities", Flags: "-l limit, -s status"},
+				{Command: "pocket realestate followupboss tasks", Desc: "List tasks/reminders", Flags: "-l limit, -c completed"},
+				{Command: "pocket realestate followupboss events", Desc: "List events/appointments", Flags: "-l limit, -s start, -e end"},
+				{Command: "pocket realestate dotloop loops", Desc: "List loops (transactions)", Flags: "-l limit, -s status"},
+				{Command: "pocket realestate dotloop loop", Desc: "Get loop details", Args: "[id]"},
+				{Command: "pocket realestate dotloop profiles", Desc: "List profiles", Flags: "-l limit"},
+				{Command: "pocket realestate dotloop tasks", Desc: "List tasks across loops", Flags: "-l limit, -s status"},
+				{Command: "pocket realestate dotloop documents", Desc: "List documents in a loop", Args: "[loop-id]", Flags: "-l limit"},
+			},
+		},
+		{
 			Name: "setup",
 			Commands: []Cmd{
 				{Command: "pocket setup list", Desc: "List services needing setup", Flags: "-a all"},
